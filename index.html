@@ -124,6 +124,13 @@ input.ed.r{text-align:right}
     <p>Extracción IA · Google Sheets · IVA trimestral · Modelo 347</p>
   </div>
   <div class="hbtns">
+    <label style="font-size:12px;opacity:.8">Año:</label>
+    <select id="sel-anio" onchange="cambiarAnio()" style="padding:5px 8px;border-radius:6px;border:none;font-size:13px;font-weight:700;color:#1a5c35">
+      <option value="2025">2025</option>
+      <option value="2026">2026</option>
+      <option value="2027">2027</option>
+      <option value="2028">2028</option>
+    </select>
     <span id="user-info"></span>
     <button id="auth-btn" onclick="handleAuth()">🔑 Conectar Google</button>
     <button class="btn bgr bsm" onclick="limpiarTodo()">🗑 Limpiar</button>
@@ -342,6 +349,7 @@ let tokenClient = null;
 // ── DATOS ─────────────────────────────────────────────────────────────────
 let ING=[], GAST=[], DET=[], CLIENTES=[], PROVEEDORES=[];
 let ID=0;
+let ANIO=new Date().getFullYear(); // Año activo
 
 const MESES=['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'];
 const MNUM={'01':'ENERO','02':'FEBRERO','03':'MARZO','04':'ABRIL','05':'MAYO','06':'JUNIO',
@@ -394,6 +402,8 @@ function showTab(id){
 
 // ── GOOGLE AUTH ───────────────────────────────────────────────────────────
 window.onload = function(){
+  // Poner año actual en selector
+  document.getElementById('sel-anio').value=ANIO;
   // Cargar config guardada
   const saved = localStorage.getItem('cfg_contabilidad');
   if(saved){
@@ -408,7 +418,27 @@ window.onload = function(){
   actualizarFiltroClientes();
 };
 
-function initGoogleAuth(){
+function cambiarAnio(){
+  const anio=parseInt(document.getElementById('sel-anio').value);
+  ANIO=anio;
+  ING=[];GAST=[];DET=[];
+  rIngresos();rGastos();rDet();cntrs();
+  if(accessToken){
+    cargarDesdeSheets();
+  } else {
+    msg(`Año ${ANIO} seleccionado. Conecta Google para cargar los datos de este año.`,'in');
+  }
+}
+
+function hojaIng(anio){return `INGRESOS_${anio||ANIO}`;}
+function hojaGast(anio){return `GASTOS_${anio||ANIO}`;}
+function hojaDet(anio){return `DETALLADOS_${anio||ANIO}`;}
+
+// Extraer año de una fecha DD/MM/AAAA
+function anioFecha(fecha){
+  const m=fecha&&fecha.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  return m?parseInt(m[3]):ANIO;
+}
   if(typeof google==='undefined')return;
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CFG.oauthClientId,
@@ -528,7 +558,7 @@ async function procesarArchivos(files){
   if(!pdfs.length)return;
 
   document.getElementById('prog').style.display='block';
-  let ok=0,err=0;
+  let ok=0,err=0,dups=0;
 
   for(let i=0;i<pdfs.length;i++){
     const f=pdfs[i];
@@ -540,6 +570,18 @@ async function procesarArchivos(files){
     try{
       const facturas=await extraerConGemini(f);
       for(const fac of facturas){
+        // Clave única: número de factura + año (extraído de la fecha)
+        const numLimpio=(fac.numFactura||'').replace('*','').trim();
+        const cliLimpio=(fac.cliente||'').trim().toUpperCase();
+        const anioFac=fac.fecha?fac.fecha.slice(-4):'';
+        const yaExiste=ING.some(x=>
+          x.numFactura.replace('*','').trim()===numLimpio &&
+          x.cliente.trim().toUpperCase()===cliLimpio &&
+          (x.fecha||'').slice(-4)===anioFac &&
+          !x.esNS
+        );
+        if(yaExiste){dups++;continue;}
+
         const id=++ID;
         ING.push({
           id, tipo:fac.tipo||'factusol',
@@ -577,19 +619,23 @@ async function procesarArchivos(files){
           });
         }
 
-        // Conceptos detallados (Factusol)
+        // Conceptos detallados (solo Factusol)
         if(fac.conceptosDetalle&&fac.conceptosDetalle.length){
           for(const c of fac.conceptosDetalle){
-            DET.push({
-              id:++ID,
-              mes:fac.mes||mF(fac.fecha||''),
-              cliente:fac.cliente||'',
-              concepto:c.concepto||'',
-              descripcion:c.concepto||'',
-              importe:parseFloat(c.importe)||0,
-              numFactura:fac.numFactura||'',
-              archivo:f.name
-            });
+            // Evitar duplicados en detallados también
+            const detDup=DET.some(d=>d.numFactura===numLimpio&&d.concepto===c.concepto&&d.cliente.toUpperCase()===cliLimpio);
+            if(!detDup){
+              DET.push({
+                id:++ID,
+                mes:fac.mes||mF(fac.fecha||''),
+                cliente:fac.cliente||'',
+                concepto:c.concepto||'',
+                descripcion:c.concepto||'',
+                importe:parseFloat(c.importe)||0,
+                numFactura:fac.numFactura||'',
+                archivo:f.name
+              });
+            }
           }
         }
       }
@@ -609,7 +655,8 @@ async function procesarArchivos(files){
   ING.sort((a,b)=>parseFecha(a)-parseFecha(b));
 
   if(ok>0){
-    msg(`✓ ${ok} PDF(s) procesado(s) correctamente${err?' · '+err+' con error':''}.`,'ok');
+    const dupTxt=dups>0?` · ${dups} duplicado(s) ignorado(s)`:'';
+    msg(`✓ ${ok} PDF(s) procesado(s) correctamente${err?' · '+err+' con error':''}${dupTxt}.`,'ok');
     if(accessToken) await guardarEnSheets();
   }
 
@@ -960,14 +1007,65 @@ async function guardarEnSheets(){
   if(!ING.length){msg('No hay ingresos para guardar.','er');return;}
   try{
     msg('<span class="sp"></span> Guardando en Google Sheets...','in');
-    await asegurarHoja('INGRESOS');
     const cab=['MES','TRIMESTRE','FECHA','FACTURA','CONCEPTO','CLIENTE','CIF','B. IMPONIBLE','T. IVA','IVA','T. IRPF','IRPF','TOTAL','PAGADO'];
-    const rows=[cab,...ING.map(f=>[f.mes,trN(f.mes),f.fecha,f.numFactura,
-      f.esNS?'':(f.conceptos||[])[0]||'',f.cliente,f.cif,
-      +f.baseImponible.toFixed(2),f.pctIva,+f.iva.toFixed(2),
-      f.pctIrpf||0,+(f.irpf||0).toFixed(2),+f.total.toFixed(2),''])];
-    await sheetsRequest('PUT',`/values/INGRESOS!A1?valueInputOption=RAW`,{values:rows});
-    msg('✓ Ingresos guardados en Google Sheets.','ok');
+
+    // Agrupar facturas por año
+    const porAnio={};
+    for(const f of ING){
+      const a=anioFecha(f.fecha);
+      if(!porAnio[a])porAnio[a]=[];
+      porAnio[a].push(f);
+    }
+
+    // Guardar cada año en su hoja
+    for(const[anio,facturas]of Object.entries(porAnio)){
+      const hoja=hojaIng(anio);
+      await asegurarHoja(hoja);
+      // Leer lo que ya hay en esa hoja para no machacar otros años
+      let existentes=[];
+      try{
+        const ex=await sheetsRequest('GET',`/values/${hoja}!A2:N2000`);
+        if(ex&&ex.values)existentes=ex.values.filter(r=>r[0]);
+      }catch(e){}
+      // Fusionar: mantener filas existentes que no estén en las nuevas, añadir/actualizar nuevas
+      const nuevasMap=new Map(facturas.map(f=>[f.numFactura+'|'+f.cliente,f]));
+      const filasFinales=[cab];
+      // Filas existentes que no se solapan
+      for(const r of existentes){
+        const key=(r[3]||'')+'|'+(r[5]||'');
+        if(!nuevasMap.has(key))filasFinales.push(r);
+      }
+      // Nuevas facturas
+      for(const f of facturas){
+        filasFinales.push([f.mes,trN(f.mes),f.fecha,f.numFactura,
+          f.esNS?'':(f.conceptos||[])[0]||'',f.cliente,f.cif,
+          +f.baseImponible.toFixed(2),f.pctIva,+f.iva.toFixed(2),
+          f.pctIrpf||0,+(f.irpf||0).toFixed(2),+f.total.toFixed(2),'']);
+      }
+      await sheetsRequest('PUT',`/values/${hoja}!A1?valueInputOption=RAW`,{values:filasFinales});
+    }
+
+    // Guardar detallados también agrupados por año
+    if(DET.length){
+      const detPorAnio={};
+      for(const d of DET){
+        // Buscar la fecha de la factura correspondiente
+        const fac=ING.find(f=>f.numFactura===d.numFactura&&f.cliente===d.cliente);
+        const a=fac?anioFecha(fac.fecha):ANIO;
+        if(!detPorAnio[a])detPorAnio[a]=[];
+        detPorAnio[a].push(d);
+      }
+      for(const[anio,dets]of Object.entries(detPorAnio)){
+        const hojaDt=hojaDet(anio);
+        await asegurarHoja(hojaDt);
+        const cabD=['MES','CLIENTE','CONCEPTO','IMPORTE (s/IVA)','Nº FACTURA'];
+        const rowsD=[cabD,...dets.map(d=>[d.mes,d.cliente,d.concepto,+d.importe.toFixed(2),d.numFactura])];
+        await sheetsRequest('PUT',`/values/${hojaDt}!A1?valueInputOption=RAW`,{values:rowsD});
+      }
+    }
+
+    const anos=Object.keys(porAnio).join(', ');
+    msg(`✓ Facturas guardadas en Google Sheets (años: ${anos}).`,'ok');
   }catch(e){msg('✗ Error guardando: '+e.message,'er');}
 }
 
@@ -976,46 +1074,83 @@ async function guardarGastosSheets(){
   if(!GAST.length){msg('No hay gastos para guardar.','er');return;}
   try{
     msg('<span class="sp"></span> Guardando gastos...','in');
-    await asegurarHoja('GASTOS');
     const cab=['MES','TRIMESTRE','FECHA','FACTURA','PROVEEDOR','CIF','B. IMPONIBLE','T. IVA','IVA','T. IRPF','IRPF','TOTAL','PAGADO'];
-    const rows=[cab,...GAST.map(g=>[g.mes,trN(g.mes),g.fecha,g.numFactura,g.proveedor,g.cif,
-      +g.baseImponible.toFixed(2),g.pctIva,+g.iva.toFixed(2),
-      g.pctIrpf||0,+(g.irpf||0).toFixed(2),+g.total.toFixed(2),g.pagado||''])];
-    await sheetsRequest('PUT',`/values/GASTOS!A1?valueInputOption=RAW`,{values:rows});
-    msg('✓ Gastos guardados en Google Sheets.','ok');
+    const porAnio={};
+    for(const g of GAST){
+      const a=anioFecha(g.fecha)||ANIO;
+      if(!porAnio[a])porAnio[a]=[];
+      porAnio[a].push(g);
+    }
+    for(const[anio,gastos]of Object.entries(porAnio)){
+      const hoja=hojaGast(anio);
+      await asegurarHoja(hoja);
+      const rows=[cab,...gastos.map(g=>[g.mes,trN(g.mes),g.fecha,g.numFactura,g.proveedor,g.cif,
+        +g.baseImponible.toFixed(2),g.pctIva,+g.iva.toFixed(2),
+        g.pctIrpf||0,+(g.irpf||0).toFixed(2),+g.total.toFixed(2),g.pagado||''])];
+      await sheetsRequest('PUT',`/values/${hoja}!A1?valueInputOption=RAW`,{values:rows});
+    }
+    const anos=Object.keys(porAnio).join(', ');
+    msg(`✓ Gastos guardados en Google Sheets (años: ${anos}).`,'ok');
   }catch(e){msg('✗ Error guardando: '+e.message,'er');}
 }
 
 async function cargarDesdeSheets(){
   if(!accessToken){msg('Conecta primero con Google.','er');return;}
   try{
-    msg('<span class="sp"></span> Cargando datos desde Google Sheets...','in');
+    msg(`<span class="sp"></span> Cargando datos ${ANIO} desde Google Sheets...`,'in');
+    const hI=hojaIng(), hG=hojaGast(), hD=hojaDet();
+
+    // Verificar que existe la hoja del año
+    const info=await sheetsRequest('GET','');
+    const hojas=info.sheets.map(s=>s.properties.title);
+    if(!hojas.includes(hI)){
+      msg(`No hay datos para ${ANIO} en Google Sheets todavía.`,'in');
+      return;
+    }
+
     // Cargar ingresos
-    const ri=await sheetsRequest('GET','/values/INGRESOS!A2:N1000');
+    const ri=await sheetsRequest('GET',`/values/${hI}!A2:N2000`);
     if(ri&&ri.values&&ri.values.length){
       ING=ri.values.filter(r=>r[0]).map(r=>({
-        id:++ID,tipo:'factusol',mes:r[0]||'',fecha:r[2]||'',
+        id:++ID,
+        tipo:r[5]==='GESTERNOVA S.A.'?'gesternova':'factusol',
+        mes:r[0]||'',fecha:r[2]||'',
         numFactura:r[3]||'',conceptos:r[4]?[r[4]]:[],
         cliente:r[5]||'',cif:r[6]||'',
         baseImponible:parseFloat(r[7])||0,pctIva:parseFloat(r[8])||0,
         iva:parseFloat(r[9])||0,pctIrpf:parseFloat(r[10])||0,
         irpf:parseFloat(r[11])||0,total:parseFloat(r[12])||0,
-        esNS:false,archivo:'Sheets'
+        esNS:(r[3]||'').endsWith('*'),archivo:'Sheets'
       }));
     }
+
     // Cargar gastos
-    const rg=await sheetsRequest('GET','/values/GASTOS!A2:M1000');
-    if(rg&&rg.values&&rg.values.length){
-      GAST=rg.values.filter(r=>r[0]).map(r=>({
-        id:++ID,mes:r[0]||'',fecha:r[2]||'',numFactura:r[3]||'',
-        proveedor:r[4]||'',cif:r[5]||'',
-        baseImponible:parseFloat(r[6])||0,pctIva:parseFloat(r[7])||0,
-        iva:parseFloat(r[8])||0,pctIrpf:parseFloat(r[9])||0,
-        irpf:parseFloat(r[10])||0,total:parseFloat(r[11])||0,pagado:r[12]||''
-      }));
+    if(hojas.includes(hG)){
+      const rg=await sheetsRequest('GET',`/values/${hG}!A2:M2000`);
+      if(rg&&rg.values&&rg.values.length){
+        GAST=rg.values.filter(r=>r[0]).map(r=>({
+          id:++ID,mes:r[0]||'',fecha:r[2]||'',numFactura:r[3]||'',
+          proveedor:r[4]||'',cif:r[5]||'',
+          baseImponible:parseFloat(r[6])||0,pctIva:parseFloat(r[7])||0,
+          iva:parseFloat(r[8])||0,pctIrpf:parseFloat(r[9])||0,
+          irpf:parseFloat(r[10])||0,total:parseFloat(r[11])||0,pagado:r[12]||''
+        }));
+      }
     }
-    rIngresos();rGastos();cntrs();actualizarFiltroClientes();
-    msg(`✓ Datos cargados: ${ING.length} ingresos, ${GAST.length} gastos.`,'ok');
+
+    // Cargar detallados
+    if(hojas.includes(hD)){
+      const rd=await sheetsRequest('GET',`/values/${hD}!A2:E2000`);
+      if(rd&&rd.values&&rd.values.length){
+        DET=rd.values.filter(r=>r[0]).map(r=>({
+          id:++ID,mes:r[0]||'',cliente:r[1]||'',concepto:r[2]||'',
+          importe:parseFloat(r[3])||0,numFactura:r[4]||'',archivo:'Sheets'
+        }));
+      }
+    }
+
+    rIngresos();rGastos();rDet();cntrs();actualizarFiltroClientes();
+    msg(`✓ Datos ${ANIO} cargados: ${ING.length} ingresos, ${GAST.length} gastos.`,'ok');
   }catch(e){msg('✗ Error cargando: '+e.message,'er');}
 }
 
