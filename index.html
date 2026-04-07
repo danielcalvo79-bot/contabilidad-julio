@@ -477,7 +477,7 @@ Ejemplo: [{"tipo":"factusol","fecha":"08/06/2025","mes":"JUNIO",...}]`;
         {text:prompt},
         {inline_data:{mime_type:'application/pdf',data:b64}}
       ]}],
-      generationConfig:{temperature:0,maxOutputTokens:4096}
+      generationConfig:{temperature:0,maxOutputTokens:65536}
     })
   });
 
@@ -487,9 +487,38 @@ Ejemplo: [{"tipo":"factusol","fecha":"08/06/2025","mes":"JUNIO",...}]`;
   }
 
   const data=await response.json();
-  const txt=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
-  const clean=txt.replace(/```json|```/g,'').trim();
-  return JSON.parse(clean);
+  let txt=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
+  // Limpiar markdown y espacios
+  txt=txt.replace(/```json\s*/gi,'').replace(/```\s*/g,'').trim();
+  // Intentar parsear directamente
+  try{
+    return JSON.parse(txt);
+  }catch(e1){
+    // Intentar extraer array JSON aunque el texto esté truncado
+    const ini=txt.indexOf('[');
+    if(ini===-1)throw new Error('Gemini no devolvió un array JSON válido');
+    let sub=txt.slice(ini);
+    // Cerrar el array si está truncado
+    // Contar llaves abiertas para saber dónde truncar
+    let depth=0,lastGood=0;
+    for(let i=0;i<sub.length;i++){
+      if(sub[i]==='{')depth++;
+      else if(sub[i]==='}'){depth--;if(depth===0)lastGood=i;}
+    }
+    if(lastGood>0){
+      sub=sub.slice(0,lastGood+1)+']';
+      try{return JSON.parse(sub);}catch(e2){}
+    }
+    // Último intento: extraer objetos JSON uno a uno
+    const objetos=[];
+    const re=/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
+    let m;
+    while((m=re.exec(sub))!==null){
+      try{objetos.push(JSON.parse(m[0]));}catch(e){}
+    }
+    if(objetos.length>0)return objetos;
+    throw new Error('No se pudo parsear la respuesta de Gemini. Prueba con menos facturas por PDF.');
+  }
 }
 
 async function procesarArchivos(files){
