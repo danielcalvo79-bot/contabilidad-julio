@@ -669,8 +669,10 @@ async function procesarArchivos(files){
 function rIngresos(){
   const tb=document.getElementById('bi');
   tb.innerHTML='';
-  if(!ING.length){tb.innerHTML='<tr><td colspan="14" class="emp">Arrastra PDFs arriba — Gemini IA extraerá los datos</td></tr>';return;}
-  ING.forEach((f,i)=>{
+  const filtrados=ING.filter(f=>anioFecha(f.fecha)===ANIO);
+  if(!filtrados.length){tb.innerHTML=`<tr><td colspan="14" class="emp">No hay facturas para ${ANIO} — arrastra PDFs o carga desde Sheets</td></tr>`;return;}
+  filtrados.forEach((f)=>{
+    const i=ING.indexOf(f); // índice real en ING para ediciones
     const tr=document.createElement('tr');
     if(f.esNS)tr.classList.add('ns');
     tr.innerHTML=`
@@ -1100,9 +1102,8 @@ async function cargarDesdeSheets(){
   if(!accessToken){msg('Conecta primero con Google.','er');return;}
   try{
     msg(`<span class="sp"></span> Cargando datos ${ANIO} desde Google Sheets...`,'in');
-    const hI=hojaIng(), hG=hojaGast(), hD=hojaDet();
+    const hI=hojaIng(ANIO), hG=hojaGast(ANIO), hD=hojaDet(ANIO);
 
-    // Verificar que existe la hoja del año
     const info=await sheetsRequest('GET','');
     const hojas=info.sheets.map(s=>s.properties.title);
     if(!hojas.includes(hI)){
@@ -1110,10 +1111,14 @@ async function cargarDesdeSheets(){
       return;
     }
 
-    // Cargar ingresos
+    // Eliminar del array global las facturas del año que vamos a cargar (para no duplicar)
+    ING=ING.filter(f=>anioFecha(f.fecha)!==ANIO);
+    GAST=GAST.filter(g=>anioFecha(g.fecha)!==ANIO);
+
+    // Cargar ingresos del año
     const ri=await sheetsRequest('GET',`/values/${hI}!A2:N2000`);
     if(ri&&ri.values&&ri.values.length){
-      ING=ri.values.filter(r=>r[0]).map(r=>({
+      const nuevas=ri.values.filter(r=>r[0]).map(r=>({
         id:++ID,
         tipo:r[5]==='GESTERNOVA S.A.'?'gesternova':'factusol',
         mes:r[0]||'',fecha:r[2]||'',
@@ -1124,35 +1129,50 @@ async function cargarDesdeSheets(){
         irpf:parseFloat(r[11])||0,total:parseFloat(r[12])||0,
         esNS:(r[3]||'').endsWith('*'),archivo:'Sheets'
       }));
+      ING.push(...nuevas);
     }
 
-    // Cargar gastos
+    // Cargar gastos del año
     if(hojas.includes(hG)){
       const rg=await sheetsRequest('GET',`/values/${hG}!A2:M2000`);
       if(rg&&rg.values&&rg.values.length){
-        GAST=rg.values.filter(r=>r[0]).map(r=>({
+        const nuevosG=rg.values.filter(r=>r[0]).map(r=>({
           id:++ID,mes:r[0]||'',fecha:r[2]||'',numFactura:r[3]||'',
           proveedor:r[4]||'',cif:r[5]||'',
           baseImponible:parseFloat(r[6])||0,pctIva:parseFloat(r[7])||0,
           iva:parseFloat(r[8])||0,pctIrpf:parseFloat(r[9])||0,
           irpf:parseFloat(r[10])||0,total:parseFloat(r[11])||0,pagado:r[12]||''
         }));
+        GAST.push(...nuevosG);
       }
     }
 
-    // Cargar detallados
+    // Cargar detallados del año
     if(hojas.includes(hD)){
+      DET=DET.filter(d=>{
+        const fac=ING.find(f=>f.numFactura===d.numFactura);
+        return fac?anioFecha(fac.fecha)!==ANIO:true;
+      });
       const rd=await sheetsRequest('GET',`/values/${hD}!A2:E2000`);
       if(rd&&rd.values&&rd.values.length){
-        DET=rd.values.filter(r=>r[0]).map(r=>({
+        const nuevosD=rd.values.filter(r=>r[0]).map(r=>({
           id:++ID,mes:r[0]||'',cliente:r[1]||'',concepto:r[2]||'',
           importe:parseFloat(r[3])||0,numFactura:r[4]||'',archivo:'Sheets'
         }));
+        DET.push(...nuevosD);
       }
     }
 
+    // Ordenar por fecha
+    ING.sort((a,b)=>{
+      const pa=a.fecha.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+      const pb=b.fecha.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+      if(!pa||!pb)return 0;
+      return new Date(pa[3],pa[2]-1,pa[1])-new Date(pb[3],pb[2]-1,pb[1]);
+    });
+
     rIngresos();rGastos();rDet();cntrs();actualizarFiltroClientes();
-    msg(`✓ Datos ${ANIO} cargados: ${ING.length} ingresos, ${GAST.length} gastos.`,'ok');
+    msg(`✓ Datos ${ANIO} cargados: ${ING.filter(f=>anioFecha(f.fecha)===ANIO).length} ingresos, ${GAST.filter(g=>anioFecha(g.fecha)===ANIO).length} gastos.`,'ok');
   }catch(e){msg('✗ Error cargando: '+e.message,'er');}
 }
 
@@ -1231,9 +1251,12 @@ function guardarConfig(){
 
 // ── UTILS ─────────────────────────────────────────────────────────────────
 function cntrs(){
-  document.getElementById('ci').textContent=ING.length;
-  document.getElementById('cg').textContent=GAST.length;
-  document.getElementById('cd').textContent=DET.length;
+  document.getElementById('ci').textContent=ING.filter(f=>anioFecha(f.fecha)===ANIO).length;
+  document.getElementById('cg').textContent=GAST.filter(g=>anioFecha(g.fecha)===ANIO).length;
+  document.getElementById('cd').textContent=DET.filter(d=>{
+    const fac=ING.find(f=>f.numFactura===d.numFactura);
+    return fac?anioFecha(fac.fecha)===ANIO:true;
+  }).length;
 }
 function msg(html,tipo){
   const d=document.getElementById('msgs');
