@@ -439,6 +439,8 @@ function anioFecha(fecha){
   const m=fecha&&fecha.match(/(\d{2})\/(\d{2})\/(\d{4})/);
   return m?parseInt(m[3]):ANIO;
 }
+
+function initGoogleAuth(){
   if(typeof google==='undefined')return;
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CFG.oauthClientId,
