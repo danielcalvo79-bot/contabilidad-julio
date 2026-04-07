@@ -456,15 +456,16 @@ Para cada factura, devuelve un objeto JSON con estos campos exactos:
 - pctIrpf: porcentaje IRPF como decimal (0.19, 0.15, 0.07, 0) - 0 si no hay
 - irpf: importe IRPF en euros como número - 0 si no hay
 - total: importe total de la factura en euros
-- conceptos: array con los conceptos especiales detectados como IBI, BASURA, COMUNIDAD, REPARACIONES, AGUA, ENERGIA, VADO (array vacío si no hay)
-- conceptosDetalle: array de objetos {concepto, importe} para cada concepto especial detectado con su importe sin IVA
+- conceptos: array con los conceptos especiales detectados como IBI, BASURA, COMUNIDAD, REPARACIONES, AGUA, ENERGIA, VADO (array vacío si no hay). SOLO para facturas tipo "factusol". Para "gesternova" este campo siempre es array vacío [].
+- conceptosDetalle: array de objetos {concepto, importe} para cada concepto especial con su importe sin IVA. SOLO para facturas tipo "factusol". Para "gesternova" este campo siempre es array vacío [].
 - esNoSujeta: false siempre para la línea principal
-- baseNoSujeta: importe de la base no sujeta a IVA si existe (en facturas Gesternova, suele ser un número negativo pequeño), 0 si no existe
+- baseNoSujeta: importe de la base no sujeta a IVA si existe (en facturas Gesternova, suele ser un número negativo pequeño como -0.27), 0 si no existe. SOLO aplica a "gesternova".
 
 IMPORTANTE para Gesternova:
 - El mes SIEMPRE debe ser el mes de la FECHA DE FACTURA, no el mes de liquidación de producción
 - Ejemplo: si fecha factura es 28/04/2025, el mes es ABRIL aunque ponga "Liquidación Febrero 2025"
-- baseNoSujeta es el importe que aparece en "Base no Sujeta" (número negativo)
+- baseNoSujeta es el importe que aparece en "Base no Sujeta" (número negativo pequeño)
+- conceptos y conceptosDetalle son SIEMPRE arrays vacíos en facturas Gesternova
 
 Devuelve SOLO un array JSON válido, sin texto adicional, sin markdown, sin explicaciones.
 Ejemplo: [{"tipo":"factusol","fecha":"08/06/2025","mes":"JUNIO",...}]`;
@@ -602,6 +603,10 @@ async function procesarArchivos(files){
 
   document.getElementById('prog-fill').style.width='100%';
   setTimeout(()=>document.getElementById('prog').style.display='none',1000);
+
+  // Ordenar por fecha
+  function parseFecha(f){const m=f.fecha&&f.fecha.match(/(\d{2})\/(\d{2})\/(\d{4})/);return m?new Date(m[3],m[2]-1,m[1]):new Date(0);}
+  ING.sort((a,b)=>parseFecha(a)-parseFecha(b));
 
   if(ok>0){
     msg(`✓ ${ok} PDF(s) procesado(s) correctamente${err?' · '+err+' con error':''}.`,'ok');
