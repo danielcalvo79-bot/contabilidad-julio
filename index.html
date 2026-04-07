@@ -249,7 +249,10 @@ input.ed.r{text-align:right}
   <div class="card">
     <div class="ch">
       <h3>👥 Clientes</h3>
-      <button class="btn bg bsm" onclick="addCliente()">+ Añadir cliente</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn bg bsm" onclick="guardarClientesSheets();localStorage.setItem('clientes_contabilidad',JSON.stringify(CLIENTES));localStorage.setItem('proveedores_contabilidad',JSON.stringify(PROVEEDORES));msg('✓ Clientes guardados.','ok')">💾 Guardar clientes</button>
+        <button class="btn bg bsm" onclick="addCliente()">+ Añadir cliente</button>
+      </div>
     </div>
     <div class="tw">
       <table>
@@ -409,6 +412,11 @@ window.onload = function(){
     CFG.sheetId=c.sheetId||CFG.sheetId;
     CFG.oauthClientId=c.oauthClientId||CFG.oauthClientId;
   }
+  // Cargar clientes guardados en localStorage
+  const savedCli=localStorage.getItem('clientes_contabilidad');
+  if(savedCli){try{CLIENTES=JSON.parse(savedCli);}catch(e){}}
+  const savedProv=localStorage.getItem('proveedores_contabilidad');
+  if(savedProv){try{PROVEEDORES=JSON.parse(savedProv);}catch(e){}}
   initGoogleAuth();
   rClientes();
   rProveedores();
@@ -494,7 +502,10 @@ function initGoogleAuth(){
       document.getElementById('auth-btn').textContent='✅ Conectado';
       document.getElementById('user-info').textContent='Google Sheets listo';
       msg('✓ Conectado a Google Sheets correctamente.','ok');
-      cargarAniosDisponibles().then(()=>cargarDesdeSheets());
+      cargarAniosDisponibles().then(()=>{
+        cargarClientesSheets();
+        cargarDesdeSheets();
+      });
     }
   });
 }
@@ -1170,9 +1181,12 @@ async function cargarDesdeSheets(){
         mes:r[0]||'',fecha:r[2]||'',
         numFactura:r[3]||'',conceptos:r[4]?[r[4]]:[],
         cliente:r[5]||'',cif:r[6]||'',
-        baseImponible:parseFloat(r[7])||0,pctIva:parseFloat(r[8])||0,
-        iva:parseFloat(r[9])||0,pctIrpf:parseFloat(r[10])||0,
-        irpf:parseFloat(r[11])||0,total:parseFloat(r[12])||0,
+        baseImponible:parseFloat(String(r[7]).replace(',','.'))||0,
+        pctIva:parseFloat(String(r[8]).replace(',','.'))||0,
+        iva:parseFloat(String(r[9]).replace(',','.'))||0,
+        pctIrpf:parseFloat(String(r[10]).replace(',','.'))||0,
+        irpf:parseFloat(String(r[11]).replace(',','.'))||0,
+        total:parseFloat(String(r[12]).replace(',','.'))||0,
         esNS:(r[3]||'').endsWith('*'),archivo:'Sheets'
       }));
       ING.push(...nuevas);
@@ -1291,8 +1305,53 @@ function guardarConfig(){
   CFG.sheetId=document.getElementById('cfg-sheet').value.trim();
   CFG.oauthClientId=document.getElementById('cfg-oauth').value.trim();
   localStorage.setItem('cfg_contabilidad',JSON.stringify(CFG));
+  // Guardar clientes en localStorage también
+  localStorage.setItem('clientes_contabilidad',JSON.stringify(CLIENTES));
+  localStorage.setItem('proveedores_contabilidad',JSON.stringify(PROVEEDORES));
   initGoogleAuth();
-  msg('✓ Configuración guardada.','ok');
+  if(accessToken) guardarClientesSheets();
+  msg('✓ Configuración y clientes guardados.','ok');
+}
+
+async function guardarClientesSheets(){
+  if(!accessToken)return;
+  try{
+    await asegurarHoja('CLIENTES');
+    const cab=['CODIGO','NOMBRE','CIF','PROVINCIA','IVA DEF.','IRPF DEF.'];
+    const rows=[cab,...CLIENTES.map(c=>[c.codigo,c.nombre,c.cif,c.provincia,c.iva||'',c.irpf||''])];
+    await sheetsRequest('PUT',`/values/CLIENTES!A1?valueInputOption=RAW`,{values:rows});
+    await asegurarHoja('PROVEEDORES');
+    const cabP=['CODIGO','NOMBRE','CIF','PROVINCIA'];
+    const rowsP=[cabP,...PROVEEDORES.map(p=>[p.codigo,p.nombre,p.cif,p.provincia])];
+    await sheetsRequest('PUT',`/values/PROVEEDORES!A1?valueInputOption=RAW`,{values:rowsP});
+  }catch(e){console.error('Error guardando clientes',e);}
+}
+
+async function cargarClientesSheets(){
+  if(!accessToken)return;
+  try{
+    const info=await sheetsRequest('GET','');
+    const hojas=info.sheets.map(s=>s.properties.title);
+    if(hojas.includes('CLIENTES')){
+      const rc=await sheetsRequest('GET','/values/CLIENTES!A2:F200');
+      if(rc&&rc.values&&rc.values.length){
+        CLIENTES=rc.values.filter(r=>r[1]).map(r=>({
+          id:++ID,codigo:r[0]||'',nombre:r[1]||'',cif:r[2]||'',
+          provincia:r[3]||'',iva:r[4]||'',irpf:r[5]||''
+        }));
+        rClientes();
+      }
+    }
+    if(hojas.includes('PROVEEDORES')){
+      const rp=await sheetsRequest('GET','/values/PROVEEDORES!A2:D200');
+      if(rp&&rp.values&&rp.values.length){
+        PROVEEDORES=rp.values.filter(r=>r[1]).map(r=>({
+          id:++ID,codigo:r[0]||'',nombre:r[1]||'',cif:r[2]||'',provincia:r[3]||''
+        }));
+        rProveedores();
+      }
+    }
+  }catch(e){console.error('Error cargando clientes',e);}
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────
