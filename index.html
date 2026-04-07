@@ -127,9 +127,6 @@ input.ed.r{text-align:right}
     <label style="font-size:12px;opacity:.8">Año:</label>
     <select id="sel-anio" onchange="cambiarAnio()" style="padding:5px 8px;border-radius:6px;border:none;font-size:13px;font-weight:700;color:#1a5c35">
       <option value="2025">2025</option>
-      <option value="2026">2026</option>
-      <option value="2027">2027</option>
-      <option value="2028">2028</option>
     </select>
     <span id="user-info"></span>
     <button id="auth-btn" onclick="handleAuth()">🔑 Conectar Google</button>
@@ -440,6 +437,52 @@ function anioFecha(fecha){
   return m?parseInt(m[3]):ANIO;
 }
 
+// Añade un año al selector si no existe, y lo selecciona si se indica
+function registrarAnio(anio, seleccionar=false){
+  const sel=document.getElementById('sel-anio');
+  if(![...sel.options].some(o=>parseInt(o.value)===anio)){
+    const opt=document.createElement('option');
+    opt.value=anio;opt.textContent=anio;
+    // Insertar ordenado
+    let insertado=false;
+    for(let i=0;i<sel.options.length;i++){
+      if(parseInt(sel.options[i].value)>anio){
+        sel.insertBefore(opt,sel.options[i]);insertado=true;break;
+      }
+    }
+    if(!insertado)sel.appendChild(opt);
+  }
+  if(seleccionar){sel.value=anio;ANIO=anio;}
+}
+
+// Carga años disponibles desde Sheets al conectarse
+async function cargarAniosDisponibles(){
+  try{
+    const info=await sheetsRequest('GET','');
+    const hojas=info.sheets.map(s=>s.properties.title);
+    const anos=hojas
+      .filter(h=>h.startsWith('INGRESOS_'))
+      .map(h=>parseInt(h.replace('INGRESOS_','')))
+      .filter(a=>!isNaN(a))
+      .sort();
+    if(anos.length){
+      // Limpiar selector y rellenar con años reales
+      const sel=document.getElementById('sel-anio');
+      sel.innerHTML='';
+      anos.forEach(a=>{
+        const opt=document.createElement('option');
+        opt.value=a;opt.textContent=a;sel.appendChild(opt);
+      });
+      // Seleccionar el más reciente
+      ANIO=anos[anos.length-1];
+      sel.value=ANIO;
+    } else {
+      // No hay hojas aún — poner año actual
+      registrarAnio(ANIO,true);
+    }
+  }catch(e){console.error('Error cargando años',e);}
+}
+
 function initGoogleAuth(){
   if(typeof google==='undefined')return;
   tokenClient = google.accounts.oauth2.initTokenClient({
@@ -451,6 +494,7 @@ function initGoogleAuth(){
       document.getElementById('auth-btn').textContent='✅ Conectado';
       document.getElementById('user-info').textContent='Google Sheets listo';
       msg('✓ Conectado a Google Sheets correctamente.','ok');
+      cargarAniosDisponibles().then(()=>cargarDesdeSheets());
     }
   });
 }
@@ -572,14 +616,16 @@ async function procesarArchivos(files){
     try{
       const facturas=await extraerConGemini(f);
       for(const fac of facturas){
-        // Clave única: número de factura + año (extraído de la fecha)
+        const anioFac=anioFecha(fac.fecha||'');
+        // Registrar año en selector si es nuevo
+        registrarAnio(anioFac);
+
         const numLimpio=(fac.numFactura||'').replace('*','').trim();
         const cliLimpio=(fac.cliente||'').trim().toUpperCase();
-        const anioFac=fac.fecha?fac.fecha.slice(-4):'';
         const yaExiste=ING.some(x=>
           x.numFactura.replace('*','').trim()===numLimpio &&
           x.cliente.trim().toUpperCase()===cliLimpio &&
-          (x.fecha||'').slice(-4)===anioFac &&
+          anioFecha(x.fecha)===anioFac &&
           !x.esNS
         );
         if(yaExiste){dups++;continue;}
