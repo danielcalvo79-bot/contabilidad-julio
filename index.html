@@ -131,7 +131,7 @@ input.ed.r{text-align:right}
     <span id="user-info"></span>
     <button id="auth-btn" onclick="handleAuth()">🔑 Conectar Google</button>
     <button class="btn bgr bsm" onclick="limpiarTodo()">🗑 Limpiar</button>
-    <button class="btn bbl bsm" onclick="imprimirTrimestre()">🖨 Imprimir</button>
+    <button class="btn bbl bsm" onclick="imprimirContextual()">🖨 Imprimir</button>
   </div>
 </header>
 
@@ -383,6 +383,7 @@ function trN(m){return TRIM[m]||'';}
 
 // ── TABS ──────────────────────────────────────────────────────────────────
 function showTab(id){
+  tabActiva=id;
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('panel-'+id).classList.add('active');
@@ -1237,66 +1238,238 @@ async function cargarDesdeSheets(){
 }
 
 // ── IMPRIMIR TRIMESTRE ────────────────────────────────────────────────────
-function imprimirTrimestre(){
-  const t=prompt('¿Qué trimestre quieres imprimir? (1, 2, 3 o 4)\nDeja vacío para imprimir todo el año.');
+// ── IMPRESIÓN CONTEXTUAL ──────────────────────────────────────────────────
+let tabActiva='ingresos';
+
+function imprimirContextual(){
+  if(tabActiva==='ingresos')imprimirIngresos();
+  else if(tabActiva==='resumen')imprimirResumen();
+  else if(tabActiva==='mayores')imprimirMayores();
+  else if(tabActiva==='facturacion')imprimirFacturacion();
+  else if(tabActiva==='detallados')imprimirDetallados();
+  else if(tabActiva==='gastos')imprimirGastos();
+  else imprimirIngresos();
+}
+
+function estilosPrint(){
+  return `body{font-family:Arial,sans-serif;font-size:11px;color:#111;padding:16px}
+    h1{font-size:15px;color:#1a5c35;margin-bottom:3px}
+    h2{font-size:12px;color:#444;margin:14px 0 5px;border-bottom:1px solid #ccc;padding-bottom:3px}
+    p{font-size:10px;color:#666;margin-bottom:10px}
+    table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:10.5px}
+    th{background:#1a5c35;color:white;padding:5px 7px;text-align:left}
+    th.r{text-align:right}
+    td{padding:4px 7px;border-bottom:1px solid #eee}
+    td.r{text-align:right}
+    td.ns{color:#aaa;font-style:italic}
+    tr.tot td{background:#f0f7f3;font-weight:700;border-top:2px solid #1a5c35}
+    tr.sub td{background:#f9f9f9;font-weight:600}
+    .box{background:#f0f7f3;border:2px solid #1a5c35;border-radius:6px;padding:12px;margin-top:16px}
+    .box h2{border:none;margin-top:0;color:#1a5c35}
+    .lin{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #c8e6d0}
+    .lin.last{border:none;font-weight:700;font-size:13px}
+    .red{color:#a02020}.grn{color:#1a5c35}
+    @media print{body{padding:6px}}`;
+}
+
+function cabeceraDoc(subtitulo){
+  return `<h1>Julio Calvo Moreno – CIF 72644909F</h1>
+  <p>${subtitulo} · Año ${ANIO} · Generado el ${new Date().toLocaleDateString('es-ES')}</p>`;
+}
+
+function abrirVentana(titulo, html){
+  const win=window.open('','_blank');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${titulo}</title>
+  <style>${estilosPrint()}</style></head><body>${html}
+  <script>window.onload=()=>window.print()<\/script></body></html>`);
+  win.document.close();
+}
+
+// ── IMPRIMIR INGRESOS (por trimestre) ─────────────────────────────────────
+function imprimirIngresos(){
+  const t=prompt('¿Qué trimestre imprimir? (1, 2, 3 o 4)\nDeja vacío para el año completo.');
   if(t===null)return;
   const tNum=parseInt(t)||0;
+  const ingAnio=ING.filter(f=>anioFecha(f.fecha)===ANIO);
+  const ingFilt=tNum?ingAnio.filter(f=>trN(f.mes)===tNum):ingAnio;
+  const gastAnio=GAST.filter(g=>anioFecha(g.fecha)===ANIO);
+  const gastFilt=tNum?gastAnio.filter(g=>trN(g.mes)===tNum):gastAnio;
+  const titulo=tNum?`T${tNum} – ${['','Enero-Marzo','Abril-Junio','Julio-Septiembre','Octubre-Diciembre'][tNum]}`:`Año ${ANIO}`;
 
-  const ingFilt=tNum?ING.filter(f=>trN(f.mes)===tNum):ING;
-  const gastFilt=tNum?GAST.filter(g=>trN(g.mes)===tNum):GAST;
+  // Separar líneas sujetas y no sujetas
+  const sujetas=ingFilt.filter(f=>!f.esNS);
+  const noSujetas=ingFilt.filter(f=>f.esNS);
 
-  const ivaIng=ingFilt.reduce((s,f)=>s+f.iva,0);
+  const baseIva=sujetas.reduce((s,f)=>s+f.baseImponible,0);
+  const ivaIng=sujetas.reduce((s,f)=>s+f.iva,0);
+  const irpfIng=sujetas.reduce((s,f)=>s+f.irpf,0);
+  const baseNS=noSujetas.reduce((s,f)=>s+f.baseImponible,0);
   const ivaGast=gastFilt.reduce((s,g)=>s+g.iva,0);
   const ivaResult=parseFloat((ivaIng-ivaGast).toFixed(2));
-  const baseIng=ingFilt.reduce((s,f)=>s+f.baseImponible,0);
-  const totalIng=ingFilt.reduce((s,f)=>s+f.total,0);
 
-  const titulo=tNum?`Trimestre ${tNum} – ${['','T1: Enero-Marzo','T2: Abril-Junio','T3: Julio-Septiembre','T4: Octubre-Diciembre'][tNum]}`:'Año completo';
+  let html=cabeceraDoc(`Liquidación IVA · ${titulo}`);
 
-  const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
-  <title>IVA ${titulo} – Julio Calvo Moreno</title>
-  <style>
-    body{font-family:Arial,sans-serif;font-size:12px;color:#111;padding:20px}
-    h1{font-size:16px;color:#1a5c35;margin-bottom:4px}
-    h2{font-size:13px;color:#444;margin:16px 0 6px;border-bottom:1px solid #ccc;padding-bottom:3px}
-    p{font-size:11px;color:#666;margin-bottom:14px}
-    table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:11px}
-    th{background:#1a5c35;color:white;padding:6px 8px;text-align:left}
-    th.r{text-align:right}
-    td{padding:5px 8px;border-bottom:1px solid #eee}
-    td.r{text-align:right}
-    tr.tot td{background:#f0f7f3;font-weight:700;border-top:2px solid #1a5c35}
-    .resumen{background:#f0f7f3;border:2px solid #1a5c35;border-radius:8px;padding:14px;margin-top:20px}
-    .resumen h2{border:none;margin-top:0;color:#1a5c35}
-    .lin{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #c8e6d0}
-    .lin:last-child{border:none;font-weight:700;font-size:14px;color:${ivaResult>0?'#a02020':'#1a5c35'}}
-    @media print{body{padding:10px}}
-  </style></head><body>
-  <h1>Julio Calvo Moreno – CIF 72644909F</h1>
-  <p>Liquidación IVA · ${titulo} · Generado el ${new Date().toLocaleDateString('es-ES')}</p>
+  // Tabla ingresos — solo líneas sujetas
+  html+=`<h2>📥 Ingresos sujetos a IVA</h2>
+  <table><thead><tr><th>Mes</th><th>Nº Factura</th><th>Cliente</th><th class="r">Base Imp.</th><th class="r">% IVA</th><th class="r">IVA</th><th class="r">% IRPF</th><th class="r">IRPF</th><th class="r">Total</th></tr></thead><tbody>
+  ${sujetas.map(f=>`<tr><td>${f.mes}</td><td>${f.numFactura}</td><td>${f.cliente}</td>
+    <td class="r">${fN(f.baseImponible)}</td><td class="r">${(f.pctIva*100).toFixed(0)}%</td><td class="r">${fN(f.iva)}</td>
+    <td class="r">${f.pctIrpf?(f.pctIrpf*100).toFixed(0)+'%':'-'}</td><td class="r">${f.irpf?fN(f.irpf):'-'}</td>
+    <td class="r"><b>${fN(f.total)}</b></td></tr>`).join('')}
+  <tr class="tot"><td colspan="3">TOTAL</td><td class="r">${fN(baseIva)}</td><td></td><td class="r">${fN(ivaIng)}</td><td></td><td class="r">${fN(irpfIng)}</td><td class="r">${fN(sujetas.reduce((s,f)=>s+f.total,0))}</td></tr>
+  </tbody></table>`;
 
-  <h2>📥 Ingresos</h2>
-  <table><thead><tr><th>Mes</th><th>Nº Factura</th><th>Cliente</th><th class="r">Base Imp.</th><th class="r">IVA</th><th class="r">IRPF</th><th class="r">Total</th></tr></thead><tbody>
-  ${ingFilt.map(f=>`<tr><td>${f.mes}</td><td>${f.numFactura}</td><td>${f.cliente}</td><td class="r">${fN(f.baseImponible)}</td><td class="r">${fN(f.iva)}</td><td class="r">${fN(f.irpf)}</td><td class="r"><b>${fN(f.total)}</b></td></tr>`).join('')}
-  <tr class="tot"><td colspan="3">TOTAL</td><td class="r">${fN(baseIng)}</td><td class="r">${fN(ivaIng)}</td><td class="r">${fN(ingFilt.reduce((s,f)=>s+f.irpf,0))}</td><td class="r">${fN(totalIng)}</td></tr>
-  </tbody></table>
+  // Base no sujeta si existe
+  if(noSujetas.length){
+    html+=`<h2>Base no sujeta a IVA (Art. 7 Ley 37/1992)</h2>
+    <table><thead><tr><th>Mes</th><th>Nº Factura</th><th>Concepto</th><th class="r">Importe</th></tr></thead><tbody>
+    ${noSujetas.map(f=>`<tr class="ns"><td>${f.mes}</td><td>${f.numFactura}</td><td>${(f.conceptos||[]).join(', ')}</td><td class="r">${fN(f.baseImponible)}</td></tr>`).join('')}
+    <tr class="tot"><td colspan="3">TOTAL NO SUJETO</td><td class="r">${fN(baseNS)}</td></tr>
+    </tbody></table>`;
+  }
 
-  ${gastFilt.length?`<h2>📤 Gastos</h2>
-  <table><thead><tr><th>Mes</th><th>Nº Factura</th><th>Proveedor</th><th class="r">Base Imp.</th><th class="r">IVA</th><th class="r">Total</th></tr></thead><tbody>
-  ${gastFilt.map(g=>`<tr><td>${g.mes}</td><td>${g.numFactura}</td><td>${g.proveedor}</td><td class="r">${fN(g.baseImponible)}</td><td class="r">${fN(g.iva)}</td><td class="r"><b>${fN(g.total)}</b></td></tr>`).join('')}
-  <tr class="tot"><td colspan="3">TOTAL</td><td class="r">${fN(gastFilt.reduce((s,g)=>s+g.baseImponible,0))}</td><td class="r">${fN(ivaGast)}</td><td class="r">${fN(gastFilt.reduce((s,g)=>s+g.total,0))}</td></tr>
-  </tbody></table>`:''}
+  // Gastos
+  if(gastFilt.length){
+    html+=`<h2>📤 Gastos</h2>
+    <table><thead><tr><th>Mes</th><th>Nº Factura</th><th>Proveedor</th><th class="r">Base Imp.</th><th class="r">IVA</th><th class="r">Total</th></tr></thead><tbody>
+    ${gastFilt.map(g=>`<tr><td>${g.mes}</td><td>${g.numFactura}</td><td>${g.proveedor}</td><td class="r">${fN(g.baseImponible)}</td><td class="r">${fN(g.iva)}</td><td class="r"><b>${fN(g.total)}</b></td></tr>`).join('')}
+    <tr class="tot"><td colspan="3">TOTAL</td><td class="r">${fN(gastFilt.reduce((s,g)=>s+g.baseImponible,0))}</td><td class="r">${fN(ivaGast)}</td><td class="r">${fN(gastFilt.reduce((s,g)=>s+g.total,0))}</td></tr>
+    </tbody></table>`;
+  }
 
-  <div class="resumen">
-    <h2>⚖️ Resultado IVA ${titulo}</h2>
+  // Resumen IVA
+  html+=`<div class="box"><h2>⚖️ Resultado IVA – ${titulo}</h2>
+    <div class="lin"><span>Base imponible sujeta a IVA</span><span>${fN(baseIva)} €</span></div>
     <div class="lin"><span>IVA repercutido (ingresos)</span><span>${fN(ivaIng)} €</span></div>
     <div class="lin"><span>IVA soportado (gastos)</span><span>${fN(ivaGast)} €</span></div>
-    <div class="lin"><span>${ivaResult>0?'A INGRESAR A HACIENDA':'A DEVOLVER'}</span><span>${fN(Math.abs(ivaResult))} €</span></div>
-  </div>
-  <script>window.onload=()=>window.print()<\/script>
-  </body></html>`);
-  win.document.close();
+    ${baseNS?`<div class="lin"><span>Base no sujeta a IVA</span><span>${fN(baseNS)} €</span></div>`:''}
+    <div class="lin last ${ivaResult>0?'red':'grn'}"><span>${ivaResult>0?'A INGRESAR A HACIENDA':'A DEVOLVER'}</span><span>${fN(Math.abs(ivaResult))} €</span></div>
+  </div>`;
+
+  abrirVentana(`IVA ${titulo} – Julio Calvo Moreno`, html);
+}
+
+// ── IMPRIMIR RESUMEN ──────────────────────────────────────────────────────
+function imprimirResumen(){
+  const iM={};
+  for(const f of ING.filter(f=>anioFecha(f.fecha)===ANIO&&!f.esNS)){
+    if(!iM[f.mes])iM[f.mes]={b:0,v:0,r:0,t:0};
+    iM[f.mes].b+=f.baseImponible;iM[f.mes].v+=f.iva;iM[f.mes].r+=f.irpf;iM[f.mes].t+=f.total;
+  }
+  const gM={};
+  for(const g of GAST.filter(g=>anioFecha(g.fecha)===ANIO)){
+    if(!gM[g.mes])gM[g.mes]={b:0,v:0,t:0};
+    gM[g.mes].b+=g.baseImponible;gM[g.mes].v+=g.iva;gM[g.mes].t+=g.total;
+  }
+  const ivT={1:{i:0,g:0},2:{i:0,g:0},3:{i:0,g:0},4:{i:0,g:0}};
+  for(const f of ING.filter(f=>anioFecha(f.fecha)===ANIO)){const t=trN(f.mes);if(t)ivT[t].i+=f.iva;}
+  for(const g of GAST.filter(g=>anioFecha(g.fecha)===ANIO)){const t=trN(g.mes);if(t)ivT[t].g+=g.iva;}
+
+  let html=cabeceraDoc('Resumen anual de ingresos y gastos');
+  let tb=0,tv=0,tr2=0,tt=0;
+  html+=`<h2>📥 Ingresos por mes</h2>
+  <table><thead><tr><th>Mes</th><th>Trim.</th><th class="r">B. Imponible</th><th class="r">IVA</th><th class="r">IRPF</th><th class="r">Total</th></tr></thead><tbody>`;
+  MESES.forEach(m=>{const d=iM[m];if(!d)return;tb+=d.b;tv+=d.v;tr2+=d.r;tt+=d.t;
+    html+=`<tr><td>${m}</td><td>T${trN(m)}</td><td class="r">${fN(d.b)}</td><td class="r">${fN(d.v)}</td><td class="r">${fN(d.r)}</td><td class="r"><b>${fN(d.t)}</b></td></tr>`;});
+  html+=`<tr class="tot"><td>TOTAL</td><td></td><td class="r">${fN(tb)}</td><td class="r">${fN(tv)}</td><td class="r">${fN(tr2)}</td><td class="r">${fN(tt)}</td></tr></tbody></table>`;
+
+  let gb=0,gv=0,gt=0;
+  html+=`<h2>📤 Gastos por mes</h2>
+  <table><thead><tr><th>Mes</th><th>Trim.</th><th class="r">B. Imponible</th><th class="r">IVA</th><th class="r">Total</th></tr></thead><tbody>`;
+  MESES.forEach(m=>{const d=gM[m];if(!d)return;gb+=d.b;gv+=d.v;gt+=d.t;
+    html+=`<tr><td>${m}</td><td>T${trN(m)}</td><td class="r">${fN(d.b)}</td><td class="r">${fN(d.v)}</td><td class="r"><b>${fN(d.t)}</b></td></tr>`;});
+  html+=`<tr class="tot"><td>TOTAL</td><td></td><td class="r">${fN(gb)}</td><td class="r">${fN(gv)}</td><td class="r">${fN(gt)}</td></tr></tbody></table>`;
+
+  html+=`<h2>⚖️ IVA a ingresar por trimestre</h2>
+  <table><thead><tr><th>Trimestre</th><th class="r">IVA Ingresos</th><th class="r">IVA Gastos</th><th class="r">Resultado</th></tr></thead><tbody>`;
+  for(let t=1;t<=4;t++){
+    const r=parseFloat((ivT[t].i-ivT[t].g).toFixed(2));
+    html+=`<tr><td><b>T${t}</b></td><td class="r">${fN(ivT[t].i)}</td><td class="r">${fN(ivT[t].g)}</td>
+      <td class="r ${r>0?'red':'grn'}"><b>${r>0?'Ingresar':'Devolver'}: ${fN(Math.abs(r))} €</b></td></tr>`;
+  }
+  html+='</tbody></table>';
+  abrirVentana(`Resumen ${ANIO} – Julio Calvo Moreno`,html);
+}
+
+// ── IMPRIMIR MAYORES 3000 ─────────────────────────────────────────────────
+function imprimirMayores(){
+  const cl={};
+  for(const f of ING.filter(f=>anioFecha(f.fecha)===ANIO&&!f.esNS)){
+    const c=f.cliente||'Sin cliente';
+    if(!cl[c])cl[c]={T1:0,T2:0,T3:0,T4:0};
+    const t='T'+trN(f.mes);
+    if(cl[c][t]!==undefined)cl[c][t]+=parseFloat((f.baseImponible+f.iva).toFixed(2));
+  }
+  let html=cabeceraDoc('Mayores de 3.000 € – Modelo 347');
+  html+=`<h2>Base + IVA acumulado por cliente y trimestre</h2>
+  <table><thead><tr><th>Cliente</th><th class="r">T1</th><th class="r">T2</th><th class="r">T3</th><th class="r">T4</th><th class="r">Total anual</th></tr></thead><tbody>`;
+  let tT1=0,tT2=0,tT3=0,tT4=0,tTot=0;
+  for(const[c,v]of Object.entries(cl)){
+    const tot=+(v.T1+v.T2+v.T3+v.T4).toFixed(2);
+    tT1+=v.T1;tT2+=v.T2;tT3+=v.T3;tT4+=v.T4;tTot+=tot;
+    html+=`<tr><td><b>${c}</b></td><td class="r">${fN(v.T1)}</td><td class="r">${fN(v.T2)}</td><td class="r">${fN(v.T3)}</td><td class="r">${fN(v.T4)}</td>
+      <td class="r ${tot>3000?'red':''}"><b>${fN(tot)} €</b></td></tr>`;
+  }
+  html+=`<tr class="tot"><td>TOTAL</td><td class="r">${fN(tT1)}</td><td class="r">${fN(tT2)}</td><td class="r">${fN(tT3)}</td><td class="r">${fN(tT4)}</td><td class="r">${fN(tTot)} €</td></tr>`;
+  html+='</tbody></table><p style="color:#a02020">* Los importes en rojo superan 3.000 € y deben incluirse en el modelo 347.</p>';
+  abrirVentana(`Mayores 3.000€ ${ANIO} – Julio Calvo Moreno`,html);
+}
+
+// ── IMPRIMIR FACTURACIÓN POR CLIENTE (con filtros activos) ────────────────
+function imprimirFacturacion(){
+  const selCli=document.getElementById('flt-cli');
+  const selTrim=document.getElementById('flt-trim');
+  const cliFilter=selCli?selCli.value:'';
+  const trimFilter=selTrim?Array.from(selTrim.selectedOptions).map(o=>o.value).filter(Boolean):[];
+
+  const filtrados=ING.filter(f=>{
+    if(anioFecha(f.fecha)!==ANIO)return false;
+    if(cliFilter&&f.cliente!==cliFilter)return false;
+    if(trimFilter.length&&!trimFilter.includes(String(trN(f.mes))))return false;
+    return true;
+  });
+
+  const cl={};
+  for(const f of filtrados){
+    const c=f.cliente||'Sin cliente';
+    if(!cl[c])cl[c]={cif:f.cif||'',b:0,v:0,r:0,t:0,T1:{b:0,v:0,t:0},T2:{b:0,v:0,t:0},T3:{b:0,v:0,t:0},T4:{b:0,v:0,t:0}};
+    cl[c].b+=f.baseImponible;cl[c].v+=f.iva;cl[c].r+=f.irpf;cl[c].t+=f.total;
+    const tn='T'+trN(f.mes);if(cl[c][tn]){cl[c][tn].b+=f.baseImponible;cl[c][tn].v+=f.iva;cl[c][tn].t+=f.total;}
+  }
+
+  const filtroTxt=(cliFilter?`Cliente: ${cliFilter} · `:'')+(trimFilter.length?`T${trimFilter.join(', T')} · `:'Todos los trimestres');
+  let html=cabeceraDoc(`Facturación por cliente · ${filtroTxt}`);
+  html+=`<table><thead><tr><th>Cliente</th><th>CIF</th><th class="r">B. Imponible</th><th class="r">IVA</th><th class="r">IRPF</th><th class="r">Total</th></tr></thead><tbody>`;
+  let tb=0,tv=0,tr2=0,tt=0;
+  for(const[c,v]of Object.entries(cl)){tb+=v.b;tv+=v.v;tr2+=v.r;tt+=v.t;
+    html+=`<tr><td><b>${c}</b></td><td style="color:#aaa">${v.cif}</td><td class="r">${fN(v.b)}</td><td class="r">${fN(v.v)}</td><td class="r">${fN(v.r)}</td><td class="r"><b>${fN(v.t)} €</b></td></tr>`;
+  }
+  html+=`<tr class="tot"><td colspan="2">TOTAL</td><td class="r">${fN(tb)}</td><td class="r">${fN(tv)}</td><td class="r">${fN(tr2)}</td><td class="r">${fN(tt)} €</td></tr></tbody></table>`;
+  abrirVentana(`Facturación por cliente ${ANIO}`,html);
+}
+
+// ── IMPRIMIR GASTOS DETALLADOS ────────────────────────────────────────────
+function imprimirDetallados(){
+  const detAnio=DET.filter(d=>{const fac=ING.find(f=>f.numFactura===d.numFactura);return fac?anioFecha(fac.fecha)===ANIO:true;});
+  let html=cabeceraDoc('Gastos detallados por cliente y concepto');
+  html+=`<table><thead><tr><th>Mes</th><th>Cliente</th><th>Concepto</th><th class="r">Importe (s/IVA)</th><th>Nº Factura</th></tr></thead><tbody>`;
+  detAnio.forEach(d=>{html+=`<tr><td>${d.mes}</td><td>${d.cliente}</td><td>${d.concepto}</td><td class="r">${fN(d.importe)}</td><td>${d.numFactura}</td></tr>`;});
+  const tot=detAnio.reduce((s,d)=>s+d.importe,0);
+  html+=`<tr class="tot"><td colspan="3">TOTAL</td><td class="r">${fN(tot)} €</td><td></td></tr></tbody></table>`;
+  abrirVentana(`Gastos detallados ${ANIO}`,html);
+}
+
+// ── IMPRIMIR GASTOS ───────────────────────────────────────────────────────
+function imprimirGastos(){
+  const gastAnio=GAST.filter(g=>anioFecha(g.fecha)===ANIO);
+  let html=cabeceraDoc('Gastos de proveedores');
+  html+=`<table><thead><tr><th>Mes</th><th>T.</th><th>Fecha</th><th>Nº Factura</th><th>Proveedor</th><th class="r">Base Imp.</th><th class="r">IVA</th><th class="r">Total</th></tr></thead><tbody>`;
+  gastAnio.forEach(g=>{html+=`<tr><td>${g.mes}</td><td>T${trN(g.mes)}</td><td>${g.fecha}</td><td>${g.numFactura}</td><td>${g.proveedor}</td><td class="r">${fN(g.baseImponible)}</td><td class="r">${fN(g.iva)}</td><td class="r"><b>${fN(g.total)}</b></td></tr>`;});
+  const tb=gastAnio.reduce((s,g)=>s+g.baseImponible,0);
+  const tv=gastAnio.reduce((s,g)=>s+g.iva,0);
+  const tt=gastAnio.reduce((s,g)=>s+g.total,0);
+  html+=`<tr class="tot"><td colspan="5">TOTAL</td><td class="r">${fN(tb)}</td><td class="r">${fN(tv)}</td><td class="r">${fN(tt)}</td></tr></tbody></table>`;
+  abrirVentana(`Gastos ${ANIO}`,html);
 }
 
 // ── CONFIG ────────────────────────────────────────────────────────────────
