@@ -167,9 +167,21 @@ input.ed.r{text-align:right}
       <h3>📥 Facturas de ingresos</h3>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <span style="font-size:11px;color:#999">Edita los campos · Pulsa Guardar para sincronizar con Google Sheets</span>
-        <button class="btn bgr bsm" onclick="recalcularTodo()" title="Recalcula IVA e IRPF de todas las facturas usando la base imponible y los porcentajes actuales">🔄 Recalcular IVA/IRPF</button>
+        <button class="btn bgr bsm" onclick="recalcularTodo()" title="Recalcula IVA e IRPF usando la base imponible y los porcentajes actuales">🔄 Recalcular IVA/IRPF</button>
         <button class="btn bg bsm" onclick="guardarEnSheets()">💾 Guardar en Sheets</button>
       </div>
+    </div>
+    <div class="filtros">
+      <label>Cliente:</label>
+      <select id="flt-ing-cli" onchange="rIngresos()" style="min-width:180px">
+        <option value="">Todos</option>
+      </select>
+      <label style="margin-left:8px">Ordenar por:</label>
+      <select id="flt-ing-ord" onchange="rIngresos()">
+        <option value="fecha">Fecha</option>
+        <option value="cliente">Cliente</option>
+        <option value="factura">Nº Factura</option>
+      </select>
     </div>
     <div class="tw">
       <table>
@@ -179,6 +191,8 @@ input.ed.r{text-align:right}
         </tr></thead>
         <tbody id="bi"><tr><td colspan="14" class="emp">Arrastra PDFs arriba — Gemini extraerá los datos automáticamente</td></tr></tbody>
       </table>
+    </div>
+    <div id="ing-totales" style="padding:12px 16px;background:#f0f7f3;border-top:2px solid #1a5c35;display:none;font-size:12.5px">
     </div>
   </div>
 </div>
@@ -753,10 +767,39 @@ async function procesarArchivos(files){
 function rIngresos(){
   const tb=document.getElementById('bi');
   tb.innerHTML='';
-  const filtrados=ING.filter(f=>anioFecha(f.fecha)===ANIO);
-  if(!filtrados.length){tb.innerHTML=`<tr><td colspan="14" class="emp">No hay facturas para ${ANIO} — arrastra PDFs o carga desde Sheets</td></tr>`;return;}
+
+  // Actualizar selector de clientes del filtro
+  const selCli=document.getElementById('flt-ing-cli');
+  const valCli=selCli?selCli.value:'';
+  const nombresIng=[...new Set(ING.filter(f=>anioFecha(f.fecha)===ANIO).map(f=>f.cliente).filter(Boolean))].sort();
+  if(selCli){
+    selCli.innerHTML='<option value="">Todos</option>'+nombresIng.map(n=>`<option${n===valCli?' selected':''}>${n}</option>`).join('');
+  }
+
+  const filtroCli=selCli?selCli.value:'';
+  const orden=document.getElementById('flt-ing-ord')?document.getElementById('flt-ing-ord').value:'fecha';
+
+  let filtrados=ING.filter(f=>{
+    if(anioFecha(f.fecha)!==ANIO)return false;
+    if(filtroCli&&f.cliente!==filtroCli)return false;
+    return true;
+  });
+
+  // Ordenar
+  filtrados=[...filtrados].sort((a,b)=>{
+    if(orden==='cliente')return a.cliente.localeCompare(b.cliente)||parseFechaSort(a.fecha)-parseFechaSort(b.fecha);
+    if(orden==='factura')return a.numFactura.localeCompare(b.numFactura,undefined,{numeric:true});
+    return parseFechaSort(a.fecha)-parseFechaSort(b.fecha); // fecha por defecto
+  });
+
+  if(!filtrados.length){
+    tb.innerHTML=`<tr><td colspan="14" class="emp">No hay facturas para ${ANIO}${filtroCli?' – '+filtroCli:''}</td></tr>`;
+    document.getElementById('ing-totales').style.display='none';
+    return;
+  }
+
   filtrados.forEach((f)=>{
-    const i=ING.indexOf(f); // índice real en ING para ediciones
+    const i=ING.indexOf(f);
     const tr=document.createElement('tr');
     if(f.esNS)tr.classList.add('ns');
     tr.innerHTML=`
@@ -764,7 +807,7 @@ function rIngresos(){
       <td><select class="ed" onchange="ING[${i}].mes=this.value">${MESES.map(m=>`<option${f.mes===m?' selected':''}>${m}</option>`).join('')}</select></td>
       <td><input class="ed" value="${f.fecha}" onchange="ING[${i}].fecha=this.value;ING[${i}].mes=mF(this.value)" style="width:88px"></td>
       <td><input class="ed" value="${f.numFactura}" onchange="ING[${i}].numFactura=this.value" style="width:88px"></td>
-      <td><input class="ed" value="${f.cliente}" onchange="ING[${i}].cliente=this.value;actualizarFiltroClientes()" style="min-width:130px"></td>
+      <td><input class="ed" value="${f.cliente}" onchange="ING[${i}].cliente=this.value;actualizarFiltroClientes();rIngresos()" style="min-width:130px"></td>
       <td><input class="ed" value="${f.cif}" onchange="ING[${i}].cif=this.value" style="width:82px"></td>
       <td><input class="ed r" value="${fN(f.baseImponible)}" onchange="ING[${i}].baseImponible=pN(this.value);rcI(${i})" style="width:76px"></td>
       <td><select class="ed" onchange="ING[${i}].pctIva=parseFloat(this.value);rcI(${i})">
@@ -786,6 +829,24 @@ function rIngresos(){
       <td><button class="brd" onclick="delI(${f.id})">✕</button></td>`;
     tb.appendChild(tr);
   });
+
+  // Totales de lo que se muestra
+  const tBase=filtrados.reduce((s,f)=>s+f.baseImponible,0);
+  const tIva=filtrados.filter(f=>!f.esNS).reduce((s,f)=>s+f.iva,0);
+  const tIrpf=filtrados.reduce((s,f)=>s+f.irpf,0);
+  const tTotal=filtrados.reduce((s,f)=>s+f.total,0);
+  const totDiv=document.getElementById('ing-totales');
+  totDiv.innerHTML=`<span style="font-weight:700;margin-right:16px">Mostrando ${filtrados.length} facturas${filtroCli?' – '+filtroCli:''}</span>`+
+    `<span style="margin-right:16px">Base imponible: <strong>${fN(tBase)} €</strong></span>`+
+    `<span style="margin-right:16px">IVA: <strong>${fN(tIva)} €</strong></span>`+
+    `<span style="margin-right:16px">IRPF: <strong>${fN(tIrpf)} €</strong></span>`+
+    `<span>Total: <strong style="color:#1a5c35">${fN(tTotal)} €</strong></span>`;
+  totDiv.style.display='block';
+}
+
+function parseFechaSort(f){
+  const m=f&&f.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  return m?new Date(m[3],m[2]-1,m[1]):new Date(0);
 }
 function recalcularTodo(){
   const afectadas=ING.filter(f=>anioFecha(f.fecha)===ANIO);
@@ -911,6 +972,11 @@ function rDet(){
     if(filtroCli&&d.cliente!==filtroCli)return false;
     if(filtroCon&&d.concepto!==filtroCon)return false;
     return true;
+  }).sort((a,b)=>{
+    // Ordenar por fecha de la factura correspondiente
+    const fA=ING.find(f=>f.numFactura===a.numFactura);
+    const fB=ING.find(f=>f.numFactura===b.numFactura);
+    return parseFechaSort(fA?fA.fecha:'')-parseFechaSort(fB?fB.fecha:'');
   });
 
   if(!filtrados.length){
