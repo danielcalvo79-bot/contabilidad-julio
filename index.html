@@ -167,6 +167,7 @@ input.ed.r{text-align:right}
       <h3>📥 Facturas de ingresos</h3>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <span style="font-size:11px;color:#999">Edita los campos · Pulsa Guardar para sincronizar con Google Sheets</span>
+        <button class="btn bgr bsm" onclick="recalcularTodo()" title="Recalcula IVA e IRPF de todas las facturas usando la base imponible y los porcentajes actuales">🔄 Recalcular IVA/IRPF</button>
         <button class="btn bg bsm" onclick="guardarEnSheets()">💾 Guardar en Sheets</button>
       </div>
     </div>
@@ -786,6 +787,22 @@ function rIngresos(){
     tb.appendChild(tr);
   });
 }
+function recalcularTodo(){
+  const afectadas=ING.filter(f=>anioFecha(f.fecha)===ANIO);
+  if(!afectadas.length){msg('No hay facturas cargadas para recalcular.','er');return;}
+  if(!confirm(`¿Recalcular IVA e IRPF de las ${afectadas.length} facturas del año ${ANIO}?\n\nSe calculará: IVA = Base × %IVA, IRPF = Base × %IRPF, Total = Base + IVA − IRPF.\n\nDespués pulsa Guardar en Sheets para actualizar.`))return;
+  let n=0;
+  for(const f of afectadas){
+    const ivaOld=f.iva, irpfOld=f.irpf, totOld=f.total;
+    f.iva=parseFloat((f.baseImponible*f.pctIva).toFixed(2));
+    f.irpf=parseFloat((f.baseImponible*f.pctIrpf).toFixed(2));
+    f.total=parseFloat((f.baseImponible+f.iva-f.irpf).toFixed(2));
+    if(f.iva!==ivaOld||f.irpf!==irpfOld||f.total!==totOld)n++;
+  }
+  rIngresos();
+  msg(`✓ Recalculadas ${n} facturas con cambios. Revisa y pulsa 💾 Guardar en Sheets.`,'ok');
+}
+
 function rcI(i){
   const f=ING[i];
   f.iva=parseFloat((f.baseImponible*f.pctIva).toFixed(2));
