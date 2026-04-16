@@ -1162,7 +1162,7 @@ async function guardarEnSheets(){
       // Leer lo que ya hay en esa hoja para no machacar otros años
       let existentes=[];
       try{
-        const ex=await sheetsRequest('GET',`/values/${hoja}!A2:N2000`);
+        const ex=await sheetsRequest('GET',`/values/${hoja}!A2:N2000?valueRenderOption=UNFORMATTED_VALUE`);
         if(ex&&ex.values)existentes=ex.values.filter(r=>r[0]);
       }catch(e){}
       // Fusionar: mantener filas existentes que no estén en las nuevas, añadir/actualizar nuevas
@@ -1250,7 +1250,7 @@ async function cargarDesdeSheets(){
     GAST=GAST.filter(g=>anioFecha(g.fecha)!==ANIO);
 
     // Cargar ingresos del año
-    const ri=await sheetsRequest('GET',`/values/${hI}!A2:N2000`);
+    const ri=await sheetsRequest('GET',`/values/${hI}!A2:N2000?valueRenderOption=UNFORMATTED_VALUE`);
     if(ri&&ri.values&&ri.values.length){
       const nuevas=ri.values.filter(r=>r[0]).map(r=>({
         id:++ID,
@@ -1271,14 +1271,18 @@ async function cargarDesdeSheets(){
 
     // Cargar gastos del año
     if(hojas.includes(hG)){
-      const rg=await sheetsRequest('GET',`/values/${hG}!A2:M2000`);
+      const rg=await sheetsRequest('GET',`/values/${hG}!A2:M2000?valueRenderOption=UNFORMATTED_VALUE`);
       if(rg&&rg.values&&rg.values.length){
         const nuevosG=rg.values.filter(r=>r[0]).map(r=>({
           id:++ID,mes:r[0]||'',fecha:r[2]||'',numFactura:r[3]||'',
           proveedor:r[4]||'',cif:r[5]||'',
-          baseImponible:parseFloat(r[6])||0,pctIva:parseFloat(r[7])||0,
-          iva:parseFloat(r[8])||0,pctIrpf:parseFloat(r[9])||0,
-          irpf:parseFloat(r[10])||0,total:parseFloat(r[11])||0,pagado:r[12]||''
+          baseImponible:parseFloat(String(r[6]||'0').replace(',','.'))||0,
+          pctIva:parseFloat(String(r[7]||'0').replace(',','.'))||0,
+          iva:parseFloat(String(r[8]||'0').replace(',','.'))||0,
+          pctIrpf:parseFloat(String(r[9]||'0').replace(',','.'))||0,
+          irpf:parseFloat(String(r[10]||'0').replace(',','.'))||0,
+          total:parseFloat(String(r[11]||'0').replace(',','.'))||0,
+          pagado:r[12]||''
         }));
         GAST.push(...nuevosG);
       }
@@ -1290,11 +1294,12 @@ async function cargarDesdeSheets(){
         const fac=ING.find(f=>f.numFactura===d.numFactura);
         return fac?anioFecha(fac.fecha)!==ANIO:true;
       });
-      const rd=await sheetsRequest('GET',`/values/${hD}!A2:E2000`);
+      const rd=await sheetsRequest('GET',`/values/${hD}!A2:E2000?valueRenderOption=UNFORMATTED_VALUE`);
       if(rd&&rd.values&&rd.values.length){
         const nuevosD=rd.values.filter(r=>r[0]).map(r=>({
           id:++ID,mes:r[0]||'',cliente:r[1]||'',concepto:r[2]||'',
-          importe:parseFloat(r[3])||0,numFactura:r[4]||'',archivo:'Sheets'
+          importe:parseFloat(String(r[3]||'0').replace(',','.'))||0,
+          numFactura:r[4]||'',archivo:'Sheets'
         }));
         DET.push(...nuevosD);
       }
@@ -1582,7 +1587,7 @@ async function cargarClientesSheets(){
     const info=await sheetsRequest('GET','');
     const hojas=info.sheets.map(s=>s.properties.title);
     if(hojas.includes('CLIENTES')){
-      const rc=await sheetsRequest('GET','/values/CLIENTES!A2:F200');
+      const rc=await sheetsRequest('GET','/values/CLIENTES!A2:F200?valueRenderOption=UNFORMATTED_VALUE');
       if(rc&&rc.values&&rc.values.length){
         CLIENTES=rc.values.filter(r=>r[1]).map(r=>({
           id:++ID,codigo:r[0]||'',nombre:r[1]||'',cif:r[2]||'',
@@ -1592,7 +1597,7 @@ async function cargarClientesSheets(){
       }
     }
     if(hojas.includes('PROVEEDORES')){
-      const rp=await sheetsRequest('GET','/values/PROVEEDORES!A2:D200');
+      const rp=await sheetsRequest('GET','/values/PROVEEDORES!A2:D200?valueRenderOption=UNFORMATTED_VALUE');
       if(rp&&rp.values&&rp.values.length){
         PROVEEDORES=rp.values.filter(r=>r[1]).map(r=>({
           id:++ID,codigo:r[0]||'',nombre:r[1]||'',cif:r[2]||'',provincia:r[3]||''
