@@ -166,7 +166,7 @@ input.ed.r{text-align:right}
     <div class="ch">
       <h3>📥 Facturas de ingresos</h3>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <span style="font-size:11px;color:#999">Edita cualquier campo · Se guarda automáticamente en Google Sheets</span>
+        <span style="font-size:11px;color:#999">Edita los campos · Pulsa Guardar para sincronizar con Google Sheets</span>
         <button class="btn bg bsm" onclick="guardarEnSheets()">💾 Guardar en Sheets</button>
       </div>
     </div>
@@ -234,12 +234,35 @@ input.ed.r{text-align:right}
 <!-- ══ GASTOS DETALLADOS ════════════════════════════════════════════════ -->
 <div class="panel" id="panel-detallados">
   <div class="card">
-    <div class="ch"><h3>📋 Gastos detallados por cliente</h3></div>
+    <div class="ch">
+      <h3>📋 Gastos detallados por cliente</h3>
+    </div>
+    <div class="filtros">
+      <label>Cliente:</label>
+      <select id="flt-det-cli" onchange="rDet()" style="min-width:180px">
+        <option value="">Todos</option>
+      </select>
+      <label style="margin-left:8px">Concepto:</label>
+      <select id="flt-det-con" onchange="rDet()">
+        <option value="">Todos</option>
+        <option>IBI</option>
+        <option>BASURA</option>
+        <option>COMUNIDAD</option>
+        <option>REPARACIONES</option>
+        <option>AGUA</option>
+        <option>ENERGIA</option>
+        <option>VADO</option>
+        <option>CANON</option>
+        <option>SEGURO</option>
+      </select>
+    </div>
     <div class="tw">
       <table>
-        <thead><tr><th>Mes</th><th>Cliente</th><th>Concepto</th><th>Importe (s/IVA)</th><th>Nº Factura</th><th></th></tr></thead>
+        <thead><tr><th>Mes</th><th>Cliente</th><th>Concepto</th><th style="text-align:right">Importe (s/IVA)</th><th>Nº Factura</th><th></th></tr></thead>
         <tbody id="bd"><tr><td colspan="6" class="emp">Se extraen automáticamente al importar facturas Factusol</td></tr></tbody>
       </table>
+    </div>
+    <div id="det-totales" style="padding:12px 16px;background:#f7f8f6;border-top:1px solid #e8e8e4;display:none">
     </div>
   </div>
 </div>
@@ -531,6 +554,8 @@ async function extraerConGemini(file){
   const b64=await pdfToBase64(file);
   const prompt=`Eres un extractor de datos de facturas españolas. Analiza este PDF y extrae TODAS las facturas que contenga.
 
+REGLA CRÍTICA SOBRE NÚMEROS: Todos los importes deben ser números JSON con PUNTO decimal, nunca coma. Conserva SIEMPRE los céntimos exactos tal como aparecen en la factura. Ejemplos correctos: 636.57, 748.36, 111.79, 157.16, 142.19, 763.33, 326.23, 68.51. NUNCA redondees a entero: 636 es INCORRECTO, 636.57 es CORRECTO.
+
 Para cada factura, devuelve un objeto JSON con estos campos exactos:
 - tipo: "factusol" si es una factura emitida por Julio Calvo Moreno a un cliente, "gesternova" si es de Gesternova/Contigo Energía
 - fecha: fecha de la factura en formato DD/MM/AAAA
@@ -538,25 +563,25 @@ Para cada factura, devuelve un objeto JSON con estos campos exactos:
 - numFactura: número de factura exacto
 - cliente: nombre completo del cliente (en factusol es quien recibe la factura, en gesternova es siempre "GESTERNOVA S.A.")
 - cif: CIF o NIF del cliente
-- baseImponible: base imponible en euros como número (solo la base sujeta a IVA)
+- baseImponible: base imponible en euros con decimales exactos usando punto (ej: 748.36, no 748)
 - pctIva: porcentaje de IVA como decimal (0.21, 0.10, 0.04, 0)
-- iva: importe del IVA en euros como número
+- iva: importe del IVA en euros con decimales exactos usando punto (ej: 157.16, no 157)
 - pctIrpf: porcentaje IRPF como decimal (0.19, 0.15, 0.07, 0) - 0 si no hay
-- irpf: importe IRPF en euros como número - 0 si no hay
-- total: importe total de la factura en euros
+- irpf: importe IRPF en euros con decimales exactos usando punto (ej: 142.19, no 142) - 0 si no hay
+- total: importe total de la factura en euros con decimales exactos usando punto (ej: 763.33, no 763)
 - conceptos: array con los conceptos especiales detectados como IBI, BASURA, COMUNIDAD, REPARACIONES, AGUA, ENERGIA, VADO (array vacío si no hay). SOLO para facturas tipo "factusol". Para "gesternova" este campo siempre es array vacío [].
-- conceptosDetalle: array de objetos {concepto, importe} para cada concepto especial con su importe sin IVA. SOLO para facturas tipo "factusol". Para "gesternova" este campo siempre es array vacío [].
+- conceptosDetalle: array de objetos {concepto, importe} donde importe es el valor sin IVA con decimales exactos (ej: 111.79 no 111). SOLO para facturas tipo "factusol". Para "gesternova" este campo siempre es array vacío [].
 - esNoSujeta: false siempre para la línea principal
 - baseNoSujeta: importe de la base no sujeta a IVA si existe (en facturas Gesternova, suele ser un número negativo pequeño como -0.27), 0 si no existe. SOLO aplica a "gesternova".
 
 IMPORTANTE para Gesternova:
 - El mes SIEMPRE debe ser el mes de la FECHA DE FACTURA, no el mes de liquidación de producción
 - Ejemplo: si fecha factura es 28/04/2025, el mes es ABRIL aunque ponga "Liquidación Febrero 2025"
-- baseNoSujeta es el importe que aparece en "Base no Sujeta" (número negativo pequeño)
+- baseNoSujeta es el importe que aparece en "Base no Sujeta" (número negativo pequeño como -0.27)
 - conceptos y conceptosDetalle son SIEMPRE arrays vacíos en facturas Gesternova
 
 Devuelve SOLO un array JSON válido, sin texto adicional, sin markdown, sin explicaciones.
-Ejemplo: [{"tipo":"factusol","fecha":"08/06/2025","mes":"JUNIO",...}]`;
+Ejemplo correcto: [{"tipo":"factusol","fecha":"08/06/2025","mes":"JUNIO","baseImponible":748.36,"iva":157.16,"irpf":142.19,"total":763.33,...}]`;
 
   const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${CFG.geminiKey}`,{
     method:'POST',
@@ -847,18 +872,69 @@ function limpG(){
 function rDet(){
   const tb=document.getElementById('bd');
   tb.innerHTML='';
-  if(!DET.length){tb.innerHTML='<tr><td colspan="6" class="emp">Sin datos</td></tr>';return;}
-  DET.forEach((d,i)=>{
+
+  // Actualizar selector de clientes
+  const selCli=document.getElementById('flt-det-cli');
+  const valCli=selCli?selCli.value:'';
+  const clientes=[...new Set(DET.filter(d=>{
+    const fac=ING.find(f=>f.numFactura===d.numFactura);
+    return fac?anioFecha(fac.fecha)===ANIO:true;
+  }).map(d=>d.cliente).filter(Boolean))].sort();
+  if(selCli){
+    selCli.innerHTML='<option value="">Todos</option>'+clientes.map(c=>`<option${c===valCli?' selected':''}>${c}</option>`).join('');
+  }
+
+  const filtroCli=selCli?selCli.value:'';
+  const filtroCon=document.getElementById('flt-det-con')?document.getElementById('flt-det-con').value:'';
+
+  // Filtrar por año activo + filtros de cliente y concepto
+  const filtrados=DET.filter(d=>{
+    const fac=ING.find(f=>f.numFactura===d.numFactura);
+    if(fac&&anioFecha(fac.fecha)!==ANIO)return false;
+    if(filtroCli&&d.cliente!==filtroCli)return false;
+    if(filtroCon&&d.concepto!==filtroCon)return false;
+    return true;
+  });
+
+  if(!filtrados.length){
+    tb.innerHTML=`<tr><td colspan="6" class="emp">Sin datos para los filtros seleccionados</td></tr>`;
+    document.getElementById('det-totales').style.display='none';
+    return;
+  }
+
+  filtrados.forEach((d,i)=>{
+    const idxReal=DET.indexOf(d);
     const tr=document.createElement('tr');
     tr.innerHTML=`
       <td>${d.mes}</td>
-      <td><input class="ed" value="${d.cliente}" onchange="DET[${i}].cliente=this.value" style="min-width:130px"></td>
+      <td><input class="ed" value="${d.cliente}" onchange="DET[${idxReal}].cliente=this.value;rDet()" style="min-width:130px"></td>
       <td><span class="tc">${d.concepto}</span></td>
-      <td><input class="ed r" value="${fN(d.importe)}" onchange="DET[${i}].importe=pN(this.value)" style="width:76px"></td>
+      <td><input class="ed r" value="${fN(d.importe)}" onchange="DET[${idxReal}].importe=pN(this.value);rDet()" style="width:80px"></td>
       <td style="color:#bbb;font-size:11px">${d.numFactura}</td>
-      <td><button class="brd" onclick="DET.splice(${i},1);rDet();cntrs()">✕</button></td>`;
+      <td><button class="brd" onclick="DET.splice(${idxReal},1);rDet();cntrs()">✕</button></td>`;
     tb.appendChild(tr);
   });
+
+  // Totales por concepto
+  const totalesDiv=document.getElementById('det-totales');
+  const totPorConcepto={};
+  filtrados.forEach(d=>{
+    if(!totPorConcepto[d.concepto])totPorConcepto[d.concepto]=0;
+    totPorConcepto[d.concepto]+=d.importe;
+  });
+  const totalGlobal=filtrados.reduce((s,d)=>s+d.importe,0);
+
+  let html=`<div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">`;
+  html+=`<span style="font-size:12px;font-weight:600;color:#666">Totales${filtroCli?' – '+filtroCli:''}:</span>`;
+  for(const[con,tot]of Object.entries(totPorConcepto)){
+    html+=`<span style="font-size:12px"><span class="tc">${con}</span> <strong>${fN(tot)} €</strong></span>`;
+  }
+  if(Object.keys(totPorConcepto).length>1){
+    html+=`<span style="font-size:13px;font-weight:700;color:#1a5c35;margin-left:8px">TOTAL: ${fN(totalGlobal)} €</span>`;
+  }
+  html+='</div>';
+  totalesDiv.innerHTML=html;
+  totalesDiv.style.display='block';
 }
 
 // ── CLIENTES Y PROVEEDORES ────────────────────────────────────────────────
